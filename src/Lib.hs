@@ -21,6 +21,7 @@ module Lib
     ) where
 
 import Data.List
+import Data.Maybe
 
 someFunc :: IO ()
 someFunc = putStrLn "someFunc"
@@ -41,7 +42,7 @@ padtwo :: String -> String
 padtwo [x] = [x] ++ " "
 padtwo x = x
 
-empty :: [Int] -> Space
+empty :: SpaceSize -> Space
 empty [x,y] = Space' [x-1,y-1,0] [replicate y b]
   where b = replicate x " "
 empty [x,y,z] = Space' [x-1,y-1,z-1] $ replicate z p
@@ -69,12 +70,14 @@ piece :: String -> [(Int, Int, Int)] -> Piece
 piece n xyzs = canonic $ Piece' n xyzs
 
 make :: Piece -> Space
-make p = Space' d [[[c (x,y,z) | x <- [0..xs]] | y <- [0..ys]] | z <- [0..zs]]
+make p = spacemap d c
   where d = size p
         (Piece' n xyzs) = p
-        [xs,ys,zs] = d
         c = \e -> if e `elem` xyzs then n else " "
 
+spacemap :: SpaceSize -> ((Int,Int,Int)->String) -> Space
+spacemap d c = Space' d [[[c (x,y,z) | x <- [0..xs]] | y <- [0..ys]] | z <- [0..zs]]
+  where [xs,ys,zs] = d
 
 sparse :: Space -> Piece
 sparse (Space' [xs,ys,zs] s) = piece n xyzs
@@ -127,3 +130,54 @@ moves [sx,sy,sz] p = [move (dx,dy,dz) p
 
 flail :: SpaceSize -> Piece -> [Piece]
 flail s p = concatMap (moves s) (rotations p)
+
+data Puzzle = Puzzle' { space :: SpaceSize
+                      , pieces :: [Piece]
+                      } deriving (Show, Eq, Ord)
+
+puzzle :: SpaceSize -> [Piece] -> Puzzle
+puzzle = Puzzle'
+
+data Solution = Solution' { solutionsize :: SpaceSize
+                          , statepiece :: Piece
+                          , unused :: [Piece]
+                          , solved :: [Piece]
+                          } deriving (Eq, Ord)
+
+instance Show Solution where
+  show s = progress ++ layout
+    where progress = "\n" ++ names solved ++ " ... " ++ names unused
+          names f = (intercalate " " ) (map (\(Piece' n _) -> n) (f s))
+          layout = show $ spacemap (solutionsize s) c
+          c = (fromMaybe " ") . (`lookup` piecenames)
+          piecenames = [(xyz,n) | (Piece' n xyzs) <- solved s , xyz <- xyzs]
+
+solution :: SpaceSize -> [Piece] -> [Piece] -> Solution
+solution s = Solution' s (piece "=" [])
+
+volume :: SpaceSize -> Int
+volume = foldl (*) 1 . map (+1)
+
+
+solve :: Puzzle -> [Solution]
+solve x | volume(s) /= sum (map (volume . size) $ pieces x) = []
+        | otherwise = solve' $ solution s ps []
+  where Puzzle' s ps = x
+
+solve' :: Solution -> [Solution]
+solve' x | us == [] = [x]
+         | otherwise = concatMap solve' [ Solution' ss (mergepiece sp p) (filter (/= u) us) (p:sps)
+                                        | u <- us,
+                                          p <- flail ss u,
+                                          valid x p ]
+  where Solution' ss sp us sps = x
+
+valid :: Solution -> Piece -> Bool
+valid (Solution' _ sp _ _) p = (ss `intersect` sps == ss) && (ps `intersect` sps == [])
+  where (Piece' _ ss) = shadow p
+        (Piece' _ sps) = sp
+        (Piece' _ ps) = p
+
+mergepiece :: Piece -> Piece -> Piece
+mergepiece (Piece' n sts) (Piece' _ ps) = piece n (sts ++ ps)
+
